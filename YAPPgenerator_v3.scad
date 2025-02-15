@@ -4,7 +4,7 @@
 **
 */
 
-Version="v3.3.2 (2025-01-21)";
+Version="v3.3.4 (2025-02-14)";
 
 /*
 **
@@ -294,6 +294,7 @@ yappThroughLid          = -30500;  // lightTubes
 // Misc Options
 yappNoFillet            = -30600;  // pcbStands, Connectors, lightTubes, pushButtons
 yappCountersink         = -30601;  // connectors
+yappSelfThreading       = -30602;  // Connectors
 
 // Coordinate options
 yappCoordPCB            = -30700;  // pcbStands, connectors, Cutouts, boxMounts, lightTubes, pushButtons 
@@ -532,6 +533,9 @@ maskCustom3 = [];
 //    n(d) = { <yappCoordPCB> | yappCoordBox | yappCoordBoxInside }
 //    n(e) = { yappNoFillet } : Removes the internal and external fillets and the Rounded tip on the pins
 //    n(f) = [yappPCBName, "XXX"] : Specify a PCB. Defaults to [yappPCBName, "Main"]
+//    n(g) = yappSelfThreading : make the hole a self threading hole 
+//             This ignores the holeSlack and would only be usefull 
+//             if the opposing stand if deleted see sample in Demo_Connectors
 //-------------------------------------------------------------------
 pcbStands = 
 [
@@ -563,6 +567,7 @@ pcbStands =
 //    n(d) = { yappCountersink }
 //    n(e) = [yappPCBName, "XXX"] : Specify a PCB. Defaults to [yappPCBName, "Main"]
 //    n(f) = { yappThroughLid = changes the screwhole to the lid and the socket to the base}
+//    n(g) = {yappSelfThreading} : Make the insert self threading specify the Screw Diameter in the insertDiameter
 //-------------------------------------------------------------------
 connectors   =
 [
@@ -779,6 +784,7 @@ pushButtons =
 //   p(9) = Direction : { <yappTextLeftToRight>, yappTextRightToLeft, yappTextTopToBottom, yappTextBottomToTop }
 //   p(10) = Horizontal alignment : { <yappTextHAlignLeft>, yappTextHAlignCenter, yappTextHAlignRight }
 //   p(11) = Vertical alignment : {  yappTextVAlignTop, yappTextVAlignCenter, yappTextVAlignBaseLine, <yappTextVAlignBottom> } 
+//   p(12) = Character Spacing multiplier (1.0 = normal)
 //-------------------------------------------------------------------
 labelsPlane =
 [
@@ -3691,7 +3697,7 @@ module pcbStandoff(plane, pcbStandHeight, filletRad, type, color, useFillet, con
   
    assert((thestandoff_PinDiameter+thestandoff_HoleSlack < thestandoff_Diameter), str("Pin Diameter [", thestandoff_PinDiameter, "] with Slack [", thestandoff_HoleSlack, "] is larger than PCB stand Diameter [", thestandoff_Diameter, "]" ));
   
-  
+  useSelfThreading = isTrue(yappSelfThreading, configList) ? true : false;
 
   pinLengthParam = getParamWithDefault(configList[8],0);
   
@@ -3741,7 +3747,6 @@ module pcbStandoff(plane, pcbStandHeight, filletRad, type, color, useFillet, con
 			translate([0,0,pinZOffset])
 			{
 				color(color, 1.0)
-					
 				union() 
 				{
 				  if (useFillet) 
@@ -3759,7 +3764,7 @@ module pcbStandoff(plane, pcbStandHeight, filletRad, type, color, useFillet, con
     
     // **********************
 		//-- Use boxPart to determine where to place it
-    module standHole(boxPart, color)
+    module standHole(boxPart, color, useSelfThreading)
     {
       if (useFillet) 
       {
@@ -3780,28 +3785,47 @@ module pcbStandoff(plane, pcbStandHeight, filletRad, type, color, useFillet, con
 				{
 					//--The Actual Hole
 					translate([0,0,holeZ]) 
-					cylinder(
-						d = thestandoff_PinDiameter+thestandoff_HoleSlack,
-						h = pcbStandHeight+0.02,
-						//h = pcbStandHeight+0.02-thestandoff_PinDiameter/2,
-						center = false);
-							
-					//-- The Fillet		
-					filletRadius = (filletRad==0) ? basePlaneThickness : filletRad; 
-					translate([0,0,filletZ+pcbGap]) 
-					color(color,1.0) 
-					pinFillet(-filletDiameter, -filletRadius);
+            
+            if (!useSelfThreading)
+            {            
+                cylinder(
+                    d = thestandoff_PinDiameter+thestandoff_HoleSlack,
+                    h = pcbStandHeight+0.02,
+                    //h = pcbStandHeight+0.02-thestandoff_PinDiameter/2,
+                    center = false);
+            } 
+            else
+            {
+                self_forming_screw(h=pcbStandHeight+0.02, d=thestandoff_PinDiameter,center=false);   
+            }
+                        
+            //-- The Fillet		
+            filletRadius = (filletRad==0) ? basePlaneThickness : filletRad; 
+            translate([0,0,filletZ+pcbGap]) 
+            color(color,1.0) 
+            pinFillet(-filletDiameter, -filletRadius);
 				} // difference
       } //if (useFillet) 
       else
       {
         color(color, 1.0)
         translate([0,0,-0.01])
-        cylinder(
-          d = thestandoff_PinDiameter+thestandoff_HoleSlack,
-          h = (pcbGap*2)+pcbStandHeight+0.02,
-          center = false);
-      }
+
+        if (!useSelfThreading)
+        {
+          cylinder(
+            d = thestandoff_PinDiameter+thestandoff_HoleSlack,
+            h = (pcbGap*2)+pcbStandHeight+0.02,
+            center = false);
+        } // Self Threading
+        else
+        {
+          self_forming_screw(
+            d=thestandoff_PinDiameter,
+            h=pcbStandHeight+0.02, 
+            center=false);   
+        } // Not Self Threading
+      } //if (useFillet) else 
     } //-- standhole()
     
 		
@@ -3823,7 +3847,7 @@ module pcbStandoff(plane, pcbStandHeight, filletRad, type, color, useFillet, con
 			difference()
 			{
 				standoff(plane, color);
-				standHole(plane, color);
+				standHole(plane, color, useSelfThreading);
 			}   
 		} // yappPartLid
 	} //type == yappPin
@@ -3837,7 +3861,7 @@ module pcbStandoff(plane, pcbStandHeight, filletRad, type, color, useFillet, con
 			difference() 
 			{
 				standoff(plane, color);
-				standHole(plane, color);
+				standHole(plane, color, useSelfThreading);
 			}
 		} //yappPartBase
 		else
@@ -3846,7 +3870,7 @@ module pcbStandoff(plane, pcbStandHeight, filletRad, type, color, useFillet, con
 			difference() 
 			{
 				standoff(plane, color);
-				standHole(plane, color);
+				standHole(plane, color, useSelfThreading);
 			}
 		} //yappPartLid
 	} // type == yappHole
@@ -3866,7 +3890,7 @@ module pcbStandoff(plane, pcbStandHeight, filletRad, type, color, useFillet, con
 			difference()
 			{
 				standoff(plane, color);
-				standHole(plane, color);
+				standHole(plane, color, useSelfThreading);
 			}   
 		} //yappPartBase
 	} // type == yappTopPin
@@ -4003,8 +4027,13 @@ module connectorNew(shellPart, theCoordSystem, x, y, conn, outD)
           //-- insert --
           color("blue")
           translate([0, 0, -0.01])
+          if (!isTrue(yappSelfThreading, conn))
+          {
             linear_extrude(ht + 0.02)
               circle(d = d3);
+          } else {
+            self_forming_screw(h=ht + 0.02, d=d3, center=false);
+          }
         } //  difference
         
         // Add stop if needed
@@ -5989,3 +6018,66 @@ module extrudeWithRadius(length,r1=0,r2=0,fn=30){
     }
   }
 } //-- extrudeWithRadius()
+
+
+//-- Self Forming thread functions - START
+
+module main_cylinder(height=10, diameter=3,center=false) {
+    cylinder(h=height, d=diameter, $fn=64,center=center);
+}
+
+// Funkcia na výpočet priemeru výrezového valca
+// Function to calculate the diameter of the cutout cylinder
+function hole_diameter(main_diameter) = sqrt((2 / 4.5) * main_diameter * main_diameter);
+
+// Funkcia na výpočet vzdialenosti výrezových valcov od stredu
+// Function to calculate the distance of the cutout cylinders from the center
+function hole_distance(main_diameter) = (main_diameter / 2.31) + (hole_diameter(main_diameter) / 2);
+
+// Funkcia na výpočet výšky valca bez zaoblenia
+// Function to calculate the height of a cylinder without rounding
+function cylinder_height(main_height, hole_diameter) = main_height - hole_diameter;
+
+// Modul pre výrezový valec so zaoblenými koncami
+// Module for a cutout cylinder with rounded ends
+module rounded_hole_cylinder(main_height, main_diameter) {
+    hole_d = hole_diameter(main_diameter);
+    cylinder_h = cylinder_height(main_height, hole_d);
+
+    union() {
+        // Valec
+        // Cylinder
+        translate([0, 0, hole_d / 2])
+            cylinder(h=cylinder_h, d=hole_d, $fn=64);
+        // Horná guľa pre zaoblenie
+        // Top ball for rounding
+        translate([0, 0, hole_d / 2 + cylinder_h ])
+            sphere(r=hole_d / 2, $fn=64);
+        // Dolná guľa pre zaoblenie
+        // Bottom ball for rounding
+        translate([0, 0, hole_d /2 ])
+            sphere(r=hole_d / 2, $fn=64);
+    }
+}
+
+//Hlavny modul
+//Main module
+module self_forming_screw(h=10, d=3,center=false) {
+    main_height=h;
+    main_diameter=d;
+    difference() {
+        main_cylinder(main_height, main_diameter,center=center);
+        // Vytvorenie troch výrezov do valca
+        // Create three cutouts in the cylinder
+        for (i = [0 : 2]) {
+            rotate([0, 0, i * 120])
+            translate([hole_distance(main_diameter), 0, 0])
+                rounded_hole_cylinder(main_height, main_diameter);
+        }
+    }
+}
+
+// Volanie hlavneho modulu s parametrami
+// Calling the main module with parameters
+//--self_forming_screw(h=15, d=6,center=false);
+//-- Self Forming thread functions - END
